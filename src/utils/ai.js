@@ -84,7 +84,7 @@ async function callGeminiViaProxy(proxyUrl, payload) {
 }
 
 export async function getGDPProjectionWithSummary({ countryName, currentGDPUSD, thisYear = DEFAULT_THIS_YEAR, targetYear = DEFAULT_TARGET_YEAR }) {
-  const proxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL;
+  const proxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL || 'https://gdp-projection.vercel.app/api/gemini';
   const model = (import.meta.env.VITE_GEMINI_MODEL || DEFAULT_MODEL).trim();
 
   if (!proxyUrl) {
