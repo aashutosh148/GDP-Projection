@@ -3,17 +3,30 @@
 // Set an environment variable GEMINI_API_KEY in Vercel project settings.
 
 export default async function handler(req, res) {
-  // Basic CORS for local testing; adjust origins for production
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // CORS: allow only the specified production frontend
+  const ALLOWED_ORIGIN = 'https://gdp-projections.netlify.app';
+  const origin = req.headers?.origin || '';
+  const isAllowed = origin === ALLOWED_ORIGIN;
+  res.setHeader('Vary', 'Origin');
+  if (isAllowed) {
+    res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.setHeader('Access-Control-Max-Age', '86400');
   console.log('[gemini] Incoming request', {
     method: req.method,
     path: req.url,
     contentType: req.headers?.['content-type'] || req.headers?.['Content-Type'],
   });
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    // For preflight, if origin not allowed, respond 403 to signal blocked
+    if (!isAllowed) return res.status(403).end();
+    return res.status(204).end();
+  }
+
+  if (!isAllowed) {
+    return res.status(403).json({ error: 'Origin not allowed' });
   }
 
   if (req.method !== 'POST') {
