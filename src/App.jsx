@@ -4,6 +4,7 @@ import GDPChart from './components/GDPChart';
 import GrowthRateSlider from './components/GrowthRateSlider';
 import { fetchGDPData } from './utils/api';
 import Footer from './components/Footer';
+import { getGDPProjectionWithSummary } from './utils/ai';
 
 const data = {
     "Afghanistan": "AFG",
@@ -221,9 +222,15 @@ const App = () => {
     const [chartData, setChartData] = useState([]);
     const [categories, setCategories] = useState([]);
     const [growthRates, setGrowthRates] = useState({});
+    const [isLoading, setIsLoading] = useState(false);
+    const [statusMsg, setStatusMsg] = useState('');
+    // AI state
+    const [aiProjections, setAiProjections] = useState({}); // { [countryCode]: [{year, gdp}] }
+    const [aiMeta, setAiMeta] = useState({}); // { [countryCode]: { rationale, risks, recommendations } }
 
     const calculateGDP = useCallback(async (countryCode, initialGDP, growthRate) => {
-        const years = Array.from({ length: 27 }, (_, i) => `FY-${24 + i}`);
+        // Use explicit calendar years 2024-2050 to align with AI projections
+        const years = Array.from({ length: 27 }, (_, i) => String(2024 + i));
         const gdpValues = [initialGDP];
 
         for (let i = 1; i < 27; i++) {
@@ -250,7 +257,7 @@ const App = () => {
     };
     const updateChartData = useCallback(async () => {
         const newChartData = [];
-        let years = [];
+        let years = Array.from({ length: 27 }, (_, i) => String(2024 + i));
 
         for (let i = 0; i < selectedCountries.length; i++) {
             const countryCode = selectedCountries[i];
@@ -262,32 +269,75 @@ const App = () => {
                 const initialGDP = gdpData[latestYear];
                 const growthRate = growthRates[countryCode] || 5;
 
-                const { years: countryYears, gdpValues } = await calculateGDP(countryCode, initialGDP, growthRate);
-
-                if (countryYears.length > years.length) {
-                    years = countryYears;
-                }
+                const { gdpValues } = await calculateGDP(countryCode, initialGDP, growthRate);
 
                 newChartData.push({
-                    name: countryName,
+                    name: `${countryName} (baseline)`,
                     data: gdpValues,
                     color: colors[i % colors.length],
                 });
+
+                // Add AI series if available
+                const ai = aiProjections[countryCode];
+                if (Array.isArray(ai) && ai.length) {
+                    const aiSeries = years.map(y => {
+                        const item = ai.find(p => String(p.year) === y);
+                        return item ? Math.round(item.gdp) : null;
+                    });
+                    newChartData.push({
+                        name: `${countryName} (AI)`,
+                        data: aiSeries,
+                        color: colors[(i + 1) % colors.length],
+                    });
+                }
             }
         }
 
         setChartData(newChartData);
         setCategories(years);
-    }, [selectedCountries, growthRates, calculateGDP]);
+    }, [selectedCountries, growthRates, calculateGDP, aiProjections]);
 
     useEffect(() => {
         updateChartData();
     }, [updateChartData]);
 
-    const handleCountrySelect = (countryCode) => {
+    const handleCountrySelect = async (countryCode) => {
         if (!selectedCountries.includes(countryCode)) {
-            setSelectedCountries([...selectedCountries, countryCode]);
+            const countryName = Object.keys(data).find(key => data[key] === countryCode);
+            setSelectedCountries(prev => [...prev, countryCode]);
             setGrowthRates(prev => ({ ...prev, [countryCode]: 5 }));
+
+            // Kick off AI projection fetch with user-visible feedback
+            setIsLoading(true);
+            setStatusMsg(`Fetching IMF GDP and generating AI projection for ${countryName}...`);
+            try {
+                const gdpData = await fetchGDPData(countryCode);
+                if (gdpData) {
+                    const latestYear = getBestAvailableYear(gdpData);
+                    const currentGDP = gdpData[latestYear];
+
+                    const ai = await getGDPProjectionWithSummary({
+                        countryName,
+                        currentGDPUSD: currentGDP,
+                    });
+
+                    setAiProjections(prev => ({ ...prev, [countryCode]: ai.projections }));
+                    setAiMeta(prev => ({
+                        ...prev,
+                        [countryCode]: {
+                            rationale: ai.rationale,
+                            risks: ai.risks,
+                            recommendations: ai.recommendations,
+                        }
+                    }));
+                }
+            } catch (e) {
+                console.error(e);
+                setStatusMsg(`AI projection failed for ${countryName}. Showing baseline only.`);
+                setTimeout(() => setStatusMsg(''), 3000);
+            } finally {
+                setIsLoading(false);
+            }
         }
     };
 
@@ -306,8 +356,21 @@ const App = () => {
                             countries={data}
                             selectedCountries={selectedCountries}
                             onCountrySelect={handleCountrySelect}
+                            loading={isLoading}
                         />
+
+                        {statusMsg && (
+                            <div className="mb-3 text-sm text-blue-200">{statusMsg}</div>
+                        )}
+
+                        {isLoading && (
+                            <div className="mb-4 w-full h-2 bg-gray-700 rounded overflow-hidden">
+                                <div className="h-2 bg-blue-500 animate-pulse" style={{ width: '70%' }}></div>
+                            </div>
+                        )}
+
                         <GDPChart chartData={chartData} categories={categories} />
+
                         {selectedCountries.map(countryCode => (
                             <GrowthRateSlider
                                 key={countryCode}
@@ -316,6 +379,37 @@ const App = () => {
                                 onChange={(newRate) => handleGrowthRateChange(countryCode, newRate)}
                             />
                         ))}
+
+                        {/* AI Summary Section */}
+                        {selectedCountries.length > 0 && (
+                            <div className="mt-6 space-y-4">
+                                <h2 className="text-lg font-semibold text-white">AI Summary</h2>
+                                {selectedCountries.map(code => {
+                                    const countryName = Object.keys(data).find(key => data[key] === code);
+                                    const meta = aiMeta[code];
+                                    return (
+                                        <div key={code} className="bg-gray-900 rounded p-4 border border-gray-700">
+                                            <h3 className="text-white font-medium mb-2">{countryName}</h3>
+                                            {meta ? (
+                                                <div className="text-gray-200 text-sm space-y-2">
+                                                    <div>
+                                                        <span className="font-semibold">Rationale: </span>{meta.rationale || '—'}
+                                                    </div>
+                                                    <div>
+                                                        <span className="font-semibold">Risks: </span>{meta.risks || '—'}
+                                                    </div>
+                                                    <div>
+                                                        <span className="font-semibold">How to attain growth: </span>{meta.recommendations || '—'}
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="text-gray-400 text-sm">Generating AI summary...</div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
