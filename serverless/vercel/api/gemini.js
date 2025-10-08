@@ -1,8 +1,8 @@
-// Vercel Serverless Function to call Gemini securely (Node.js)
+// Vercel Serverless Function to call Gemini securely (Node.js, ESM)
 // Save this under api/ in a Vercel project (this file path assumes monorepo under serverless/vercel/)
 // Set an environment variable GEMINI_API_KEY in Vercel project settings.
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   // CORS: allow only the specified production frontend
   const ALLOWED_ORIGIN = 'https://gdp-projections.netlify.app';
   const origin = req.headers?.origin || '';
@@ -141,3 +141,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Internal server error', details: String(err) });
   }
 }
+
+export default handler;
